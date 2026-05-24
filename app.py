@@ -27,7 +27,7 @@ def nacti_surova_data(uploaded_file):
             
     uploaded_file.seek(0)
     # Načteme vše jako text (str), abychom předešli chybám při parsování
-    df = pd.read_csv(uploaded_file, sep=';', skiprows=header_idx, on_bad_lines='skip', dtype=str)
+    df = pd.read_csv(uploaded_file, sep=None, engine='python', skiprows=header_idx, on_bad_lines='skip', dtype=str)
     df.columns = df.columns.str.strip().str.replace('"', '').str.replace("'", "")
     return df
 
@@ -84,7 +84,7 @@ if uploaded_file is not None:
     
     # REÁLNÝ ČAS (Oprava bodu 2): Konverze Ammann formátu času
     # "Tue Jun 11 2024 08:56:06 GMT+0200" -> ořízneme na prvních 24 znaků a převedeme na datetime
-    df['parsed_time'] = pd.to_datetime(df[col_time].astype(str).str.slice(0, 24), format='%a %b %d %Y %H:%M:%S', errors='coerce')
+    df['parsed_time'] = pd.to_datetime(df[col_time].astype(str).str.split(' GMT').str[0], errors='coerce')
     
     # Odstranění nevalidních řádků
     df = df.dropna(subset=[col_lat, col_lon, col_stiff, 'parsed_time'])
