@@ -140,5 +140,3 @@ if uploaded_file is not None:
             st.warning("V kruhu nejsou žádná data.")
 else:
     st.info("Nahrajte soubor.")
-
-Doufám, že tohle ti zítra na stavbě i u vedoucího diplomky „vystřelí z kecek“! Je to teď na špičkové úrovni. Dej vědět, jak to šlo.
