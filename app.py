@@ -84,7 +84,7 @@ if uploaded_file is not None:
     
     # REÁLNÝ ČAS (Oprava bodu 2): Konverze Ammann formátu času
     # "Tue Jun 11 2024 08:56:06 GMT+0200" -> ořízneme na prvních 24 znaků a převedeme na datetime
-    df['parsed_time'] = pd.to_datetime(df[col_time].str.slice(0, 24), format='%a %b %d %Y %H:%M:%S', errors='coerce')
+    df['parsed_time'] = pd.to_datetime(df[col_time].astype(str).str.slice(0, 24), format='%a %b %d %Y %H:%M:%S', errors='coerce')
     
     # Odstranění nevalidních řádků
     df = df.dropna(subset=[col_lat, col_lon, col_stiff, 'parsed_time'])
