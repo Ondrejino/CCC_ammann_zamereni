@@ -78,9 +78,9 @@ if uploaded_file is not None:
     df = df_raw.copy()
     
     # Převod textových sloupců na čísla
-    df[col_lat] = pd.to_numeric(df[col_lat].str.replace(',', '.'), errors='coerce')
-    df[col_lon] = pd.to_numeric(df[col_lon].str.replace(',', '.'), errors='coerce')
-    df[col_stiff] = pd.to_numeric(df[col_stiff].str.replace(',', '.'), errors='coerce')
+    df[col_lat] = pd.to_numeric(df[col_lat].astype(str).str.replace(',', '.'), errors='coerce')
+    df[col_lon] = pd.to_numeric(df[col_lon].astype(str).str.replace(',', '.'), errors='coerce')
+    df[col_stiff] = pd.to_numeric(df[col_stiff].astype(str).str.replace(',', '.'), errors='coerce')
     
     # REÁLNÝ ČAS (Oprava bodu 2): Konverze Ammann formátu času
     # "Tue Jun 11 2024 08:56:06 GMT+0200" -> ořízneme na prvních 24 znaků a převedeme na datetime
