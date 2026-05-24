@@ -115,7 +115,7 @@ if uploaded_file is not None:
                                          marker=dict(size=4, color='#E5E7EB', opacity=0.4), name='Celá jízda'))
             
             # Pojezdy v kruhu a vizualizace "stroje"
-            color_pal = go.colors.qualitative.Prism
+            color_pal = ['#EF553B', '#00CC96', '#AB63FA', '#FFA15A', '#19D3F3', '#FF6692', '#B6E880', '#FF97FF', '#FECB52']
             color_idx = 0
             for p_id, g in in_circle.groupby('pass_id'):
                 p_color = color_pal[color_idx % len(color_pal)]
