@@ -7,9 +7,9 @@ from pyproj import Geod
 # --- 1. NASTAVENÍ APLIKACE ---
 st.set_page_config(page_title="Analýza pojezdů Ammann", layout="wide")
 st.title("🚜 CCC Analýza: Válec Ammann")
-st.caption("Interaktivní mapa se Bengr vizualizací stroje a auto-zoomem na výsledky.")
+st.caption("Interaktivní mapa s reálným geometrickým modelem stroje a auto-zoomem.")
 
-# --- 2. POMOCNÉ FUNKCE S CACHINGEM ---
+# --- 2. POMOCNÉ FUNKCE S CACHINGEM A GEOMETRIÍ ---
 @st.cache_data(show_spinner="Načítám data...")
 def nacti_surova_data(uploaded_file):
     """Načte CSV a automaticky detekuje oddělovač (sep=None)."""
@@ -32,6 +32,22 @@ def najdi_vychozi_sloupec(columns, klicove_slovo):
         if klicove_slovo in col.lower():
             return col
     return columns[0] if len(columns) > 0 else None
+
+def dej_obdelnik(lon, lat, azimut, sirka, delka, geod):
+    """Vypočítá souřadnice 4 rohů obdélníku pro reálný model stroje."""
+    # Střed přední hrany
+    fc_lon, fc_lat, _ = geod.fwd(lon, lat, azimut, delka/2)
+    # Střed zadní hrany
+    bc_lon, bc_lat, _ = geod.fwd(lon, lat, (azimut+180)%360, delka/2)
+    
+    # Rohy (posun kolmo na azimut)
+    fr_lon, fr_lat, _ = geod.fwd(fc_lon, fc_lat, (azimut+90)%360, sirka/2)
+    fl_lon, fl_lat, _ = geod.fwd(fc_lon, fc_lat, (azimut-90)%360, sirka/2)
+    bl_lon, bl_lat, _ = geod.fwd(bc_lon, bc_lat, (azimut-90)%360, sirka/2)
+    br_lon, br_lat, _ = geod.fwd(bc_lon, bc_lat, (azimut+90)%360, sirka/2)
+    
+    # Vrátí uzavřený polygon
+    return [fr_lon, fl_lon, bl_lon, br_lon, fr_lon], [fr_lat, fl_lat, bl_lat, br_lat, fr_lat]
 
 # --- 3. BOČNÍ PANEL ---
 with st.sidebar:
@@ -59,7 +75,7 @@ with st.sidebar:
         forward_val = st.text_input("Hodnota jízdy VPŘED", value="1")
         time_gap_s = st.slider("Mezera mezi pojezdy (s)", 5, 60, 15, 5)
         decimation = st.slider("Decimace mapy (každý X-tý bod)", 1, 50, 10, 1)
-        show_machine_model = st.checkbox("Zobrazit model stroje", value=True)
+        show_machine_model = st.checkbox("Zobrazit model stroje (obdélníky)", value=True)
 
 # --- 4. HLAVNÍ VÝPOČETNÍ LOGIKA ---
 if uploaded_file is not None:
@@ -83,7 +99,7 @@ if uploaded_file is not None:
         geod = Geod(ellps="WGS84")
         lons, lats = df[col_lon].values, df[col_lat].values
         
-        # Výpočet azimutu ( Course Over Ground)
+        # Výpočet azimutu (Course Over Ground)
         fwd_az, _, _ = geod.inv(lons[:-1], lats[:-1], lons[1:], lats[1:])
         fwd_az = np.append(fwd_az, fwd_az[-1])
         
@@ -106,50 +122,56 @@ if uploaded_file is not None:
             summary = in_circle.groupby('pass_id')[col_stiff].agg(['mean', 'count']).reset_index()
             summary.columns = ['Pojezd', 'Kb [-]', 'Body']
 
-            # MAPA PLOTLY - Bengr vizualizace
+            # MAPA PLOTLY
             fig_map = go.Figure()
             
-            # Trajektorie
+            # Trajektorie (mimo zkušební místo)
             df_dec = df.iloc[::decimation]
             fig_map.add_trace(go.Scatter(x=df_dec['corr_lon'], y=df_dec['corr_lat'], mode='markers', 
-                                         marker=dict(size=4, color='#E5E7EB', opacity=0.4), name='Celá jízda'))
+                                         marker=dict(size=4, color='#E5E7EB', opacity=0.4), name='Okolní data'))
             
-            # Pojezdy v kruhu a vizualizace "stroje"
+            # Pevně definovaná paleta barev (už neklekne)
             color_pal = ['#EF553B', '#00CC96', '#AB63FA', '#FFA15A', '#19D3F3', '#FF6692', '#B6E880', '#FF97FF', '#FECB52']
             color_idx = 0
+            
+            # Pojezdy v kruhu a vizualizace REÁLNÉHO stroje
             for p_id, g in in_circle.groupby('pass_id'):
                 p_color = color_pal[color_idx % len(color_pal)]
-                # Zjednodušená vizualizace stroje a cesty dat (jen pro body v kruhu)
+                
+                # Zobrazení geometrického modelu pro body v kruhu
                 if show_machine_model:
-                    # Předpokládáme, že senzor je na jednom kraji bubnu a data se přesunou do středu.
-                    # Tečka je prominentní a tvoří senzor. Buben je kolmý na směr.
-                    for i in range(0, len(g), max(1, len(g)//5)):
-                        l_lon, l_lat = g[col_lon].iloc[i], g[col_lat].iloc[i]
-                        r_lon, r_lat = g['corr_lon'].iloc[i], g['corr_lat'].iloc[i]
+                    # Uděláme cca 5 vizualizací na pojezd, ať se ty obdélníky neslijí do jedné kaše
+                    step = max(1, len(g)//5) 
+                    for i in range(0, len(g), step):
+                        l_lon, l_lat = g[col_lon].iloc[i], g[col_lat].iloc[i] # Kabina (anténa)
+                        r_lon, r_lat = g['corr_lon'].iloc[i], g['corr_lat'].iloc[i] # Běhoun (střed)
+                        
+                        # Opraveno malé geod.inv - azimut od antény k běhounu
                         head = geod.inv(l_lon, l_lat, r_lon, r_lat)[0]
                         
-                        # Vypočítáme Lon/Lat pro vizualizaci bubnu (šířka 2.1m) kolmo na směr
-                        d_width = drum_width_m / 2.0
-                        b1_lon, b1_lat, _ = geod.fwd(r_lon, r_lat, (head + 90) % 360, d_width)
-                        b2_lon, b2_lat, _ = geod.fwd(r_lon, r_lat, (head - 90) % 360, d_width)
-                        
-                        # Spojnice Anténa -> Běhoun (ukázka orientace)
+                        # 1. BUBEN (Běhoun) - 2.1m šířka, 1.0m délka. Získáme rohy přes pomocnou funkci.
+                        b_lons, b_lats = dej_obdelnik(r_lon, r_lat, head, drum_width_m, 1.0, geod)
                         fig_map.add_trace(go.Scatter(
-                            x=[l_lon, r_lon],
-                            y=[l_lat, r_lat],
-                            mode='lines', line=dict(color=p_color, width=2, dash='dash'), showlegend=False
+                            x=b_lons, y=b_lats, mode='lines', fill='toself',
+                            fillcolor=p_color, opacity=0.3, line=dict(color=p_color, width=2), showlegend=False
                         ))
                         
-                        # Vizuální buben (Buben) a tělo (lehce vykreslené)
-                        # Buben
-                        fig_map.add_trace(go.Scatter(x=[b1_lon, b2_lon], y=[b1_lat, b2_lat], mode='lines', line=dict(color='red', width=3), showlegend=False))
-                        # Spojnice a senzor
-                        fig_map.add_trace(go.Scatter(x=[r_lon], y=[r_lat], mode='markers', marker=dict(size=14, color=p_color), showlegend=False))
-                        # Malý bod pro senzor
-                        fig_map.add_trace(go.Scatter(x=[b1_lon], y=[b1_lat], mode='markers', marker=dict(size=6, color='black'), showlegend=False))
+                        # 2. KABINA - menší obdélník (cca 1.5x1.5m), světle šedý, umístěný tam, kde je anténa
+                        k_lons, k_lats = dej_obdelnik(l_lon, l_lat, head, 1.5, 1.5, geod)
+                        fig_map.add_trace(go.Scatter(
+                            x=k_lons, y=k_lats, mode='lines', fill='toself',
+                            fillcolor='gray', opacity=0.15, line=dict(color='gray', width=1), showlegend=False
+                        ))
+                        
+                        # 3. SPOJNICE (Osa stroje od kabiny k běhounu)
+                        fig_map.add_trace(go.Scatter(
+                            x=[l_lon, r_lon], y=[l_lat, r_lat], mode='lines', 
+                            line=dict(color=p_color, width=2, dash='dot'), opacity=0.7, showlegend=False
+                        ))
                 
+                # Samotné body posunuté do středu bubnu
                 fig_map.add_trace(go.Scatter(x=g['corr_lon'], y=g['corr_lat'], mode='markers+lines', 
-                                             marker=dict(size=12, color=p_color), name=f'Pojezd {int(p_id)}'))
+                                             marker=dict(size=12, color=p_color), line=dict(color=p_color), name=f'Pojezd {int(p_id)}'))
                 color_idx += 1
 
             # Kruh a střed
@@ -158,42 +180,28 @@ if uploaded_file is not None:
             fig_map.add_trace(go.Scatter(x=target_lon + (radius_m/m_lon) * np.cos(theta), y=target_lat + (radius_m/m_lat) * np.sin(theta),
                                          mode='lines', line=dict(color='black', dash='dash'), name='Zkušební místo'))
             
-            # --- AUTO-ZOOM na výsledky ---
-            # Vypočítáme ohraničující obdélník pouze pro kruh a pojezdy (čtyři body)
-            min_lat_r = target_lat - (radius_m / m_lat)
-            max_lat_r = target_lat + (radius_m / m_lat)
-            min_lon_r = target_lon - (radius_m / m_lon)
-            max_lon_r = target_lon + (radius_m / m_lon)
+            # --- AUTO-ZOOM NA VÝSLEDKY ---
+            min_lat_r, max_lat_r = target_lat - (radius_m / m_lat), target_lat + (radius_m / m_lat)
+            min_lon_r, max_lon_r = target_lon - (radius_m / m_lon), target_lon + (radius_m / m_lon)
             
-            points_lons = in_circle['corr_lon'].values
-            points_lats = in_circle['corr_lat'].values
+            points_lons, points_lats = in_circle['corr_lon'].values, in_circle['corr_lat'].values
             min_lat_p, max_lat_p = points_lats.min(), points_lats.max()
             min_lon_p, max_lon_p = points_lons.min(), points_lons.max()
             
-            overall_min_lat = min(min_lat_r, min_lat_p)
-            overall_max_lat = max(max_lat_r, max_lat_p)
-            overall_min_lon = min(min_lon_r, min_lon_p)
-            overall_max_lon = max(max_lon_r, max_lon_p)
+            overall_min_lat, overall_max_lat = min(min_lat_r, min_lat_p), max(max_lat_r, max_lat_p)
+            overall_min_lon, overall_max_lon = min(min_lon_r, min_lon_p), max(max_lon_r, max_lon_p)
             
-            # Přidáme malý buffer
-            range_lat = overall_max_lat - overall_min_lat
-            range_lon = overall_max_lon - overall_min_lon
-            buffer = 0.1
-            overall_min_lat -= range_lat * buffer
-            overall_max_lat += range_lat * buffer
-            overall_min_lon -= range_lon * buffer
-            overall_max_lon += range_lon * buffer
+            range_lat, range_lon = overall_max_lat - overall_min_lat, overall_max_lon - overall_min_lon
+            buffer = 0.15 # Malá rezerva okolo, aby se nelepil okraj kruhu na zeď okna
             
             fig_map.update_layout(
-                yaxis=dict(scaleanchor="x", scaleratio=1, range=[overall_min_lat, overall_max_lat]),
-                xaxis=dict(range=[overall_min_lon, overall_max_lon]),
-                height=700,
-                title="Interaktivní mapa (Auto-zoom na výsledky)",
-                dragmode="pan"
+                yaxis=dict(scaleanchor="x", scaleratio=1, range=[overall_min_lat - range_lat * buffer, overall_max_lat + range_lat * buffer]),
+                xaxis=dict(range=[overall_min_lon - range_lon * buffer, overall_max_lon + range_lon * buffer]),
+                height=700, title="Interaktivní mapa (Auto-zoom na výsledky)", dragmode="pan"
             )
             st.plotly_chart(fig_map, use_container_width=True)
             
-            # Graf nárůstu tuhosti
+            # Graf nárůstu tuhosti a Excel Export
             st.subheader("Nárůst tuhosti CCC")
             st.line_chart(summary.set_index('Pojezd')['Kb [-]'])
             st.dataframe(summary, hide_index=True)
@@ -201,6 +209,6 @@ if uploaded_file is not None:
             csv = summary.to_csv(index=False, sep=';', decimal=',').encode('utf-8-sig')
             st.download_button("📥 Stáhnout CSV", csv, "Vysledky.csv", "text/csv")
         else:
-            st.warning("V kruhu nejsou žádná data.")
+            st.warning("V kruhu nejsou žádná data. Zkuste zvětšit poloměr zkušebního místa.")
 else:
-    st.info("Nahrajte soubor.")
+    st.info("👋 Připraveno na analýzu! Nahrajte v levém panelu soubor.")
