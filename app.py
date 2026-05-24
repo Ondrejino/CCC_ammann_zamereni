@@ -126,7 +126,7 @@ if uploaded_file is not None:
                     for i in range(0, len(g), max(1, len(g)//5)):
                         l_lon, l_lat = g[col_lon].iloc[i], g[col_lat].iloc[i]
                         r_lon, r_lat = g['corr_lon'].iloc[i], g['corr_lat'].iloc[i]
-                        head = Geod.inv(l_lon, l_lat, r_lon, r_lat)[0]
+                        head = geod.inv(l_lon, l_lat, r_lon, r_lat)[0]
                         
                         # Vypočítáme Lon/Lat pro vizualizaci bubnu (šířka 2.1m) kolmo na směr
                         d_width = drum_width_m / 2.0
