@@ -17,7 +17,6 @@ def nacti_surova_data(file_bytes):
     Načte CSV bezpečně z bajtů (řeší problémy s hashingem v cache).
     Vyhne se pomalému engine='python' před-analýzou prvních pár KB.
     """
-    # Dekódování pouze malého vzorku pro detekci hlavičky a oddělovače
     sample_text = file_bytes[:10000].decode("utf-8", errors="ignore")
     lines = sample_text.splitlines()
     
@@ -27,11 +26,9 @@ def nacti_surova_data(file_bytes):
             header_idx = i
             break
             
-    # Detekce oddělovače (středník vs čárka)
     header_line = lines[header_idx]
     sep = ';' if header_line.count(';') > header_line.count(',') else ','
     
-    # Načtení přes rychlé C-jádro
     df = pd.read_csv(io.BytesIO(file_bytes), sep=sep, skiprows=header_idx, on_bad_lines='skip', dtype=str)
     df.columns = df.columns.str.strip().str.replace('"', '').str.replace("'", "")
     return df
@@ -60,7 +57,6 @@ with st.sidebar:
     uploaded_file = st.file_uploader("Vložte CSV z válce", type=['csv'])
     
     if uploaded_file is not None:
-        # Předáváme bajty místo file-objektu kvůli bezpečnému cachování Streamlitu
         df_raw = nacti_surova_data(uploaded_file.getvalue())
         
         st.header("2. Ověření sloupců")
@@ -83,6 +79,7 @@ with st.sidebar:
         
         st.header("5. Nastavení map")
         show_heatmap = st.checkbox("Zobrazit plošnou Heatmapu", value=True)
+        heatmap_dosah_m = st.number_input("Zobrazený úsek heatmapy (m)", value=50, step=10, help="Vyzoomuje heatmapu do tohoto dosahu od zkušebního bodu.")
         decim_heatmap = st.slider("Decimace Heatmapy (pro rychlost)", 1, 20, 5, 1)
         decimation = st.slider("Decimace detailní mapy", 1, 50, 10, 1)
         show_machine_model = st.checkbox("Zobrazit model stroje (obdélníky)", value=True)
@@ -111,7 +108,6 @@ if uploaded_file is not None:
         lons_s, lats_s = df['smooth_lon'].values, df['smooth_lat'].values
         lons, lats = df[col_lon].values, df[col_lat].values
         
-        # Výpočet azimutu přes větší krok (např. n a n+3) pro stabilitu směru
         step = 3
         fwd_az = np.zeros(len(df))
         az, _, _ = geod.inv(lons_s[:-step], lats_s[:-step], lons_s[step:], lats_s[step:])
@@ -121,16 +117,15 @@ if uploaded_file is not None:
         is_forward = (df[col_dir].astype(str) == str(forward_val)).values
         machine_heading = np.where(is_forward, fwd_az, (fwd_az + 180) % 360)
         
-        # Aplikace offsetu na vyhladěný azimut, ale reálné (nevyhlazené) souřadnice antény
         new_lons, new_lats, _ = geod.fwd(lons, lats, machine_heading, np.full(len(lons), offset_m))
         df['corr_lon'], df['corr_lat'] = new_lons, new_lats
         
-        # Korekce zeměpisné šířky pro správný vizuální poměr (odstranění elips) - společné pro obě mapy
+        # Matematické převody pro obě mapy
         cos_correction = 1 / np.cos(np.radians(target_lat))
         m_lat, m_lon = 111320, 111320 * np.cos(np.radians(target_lat))
         theta = np.linspace(0, 2*np.pi, 100)
 
-        # --- NOVÉ: PŘIDÁNÍ HEATMAPY ---
+        # --- PLOŠNÁ HEATMAPA S AUTO-ZOOMEM ---
         if show_heatmap:
             st.subheader("Plošná mapa tuhosti (Heatmapa)")
             fig_heat = go.Figure()
@@ -142,15 +137,22 @@ if uploaded_file is not None:
                 name="Naměřená tuhost", hovertext=df_h[col_stiff]
             ))
             
-            # Vyznačení zkušebního bodu křížkem a kruhem
             fig_heat.add_trace(go.Scatter(x=[target_lon], y=[target_lat], mode='markers', 
                                           marker=dict(size=12, symbol='x', color='black'), name="Zkušební bod"))
             fig_heat.add_trace(go.Scatter(x=target_lon + (radius_m/m_lon) * np.cos(theta), y=target_lat + (radius_m/m_lat) * np.sin(theta),
                                           mode='lines', line=dict(color='black', dash='dot'), name="Radius místa"))
             
-            fig_heat.update_layout(yaxis=dict(scaleanchor="x", scaleratio=cos_correction), height=600, dragmode='pan')
+            # Autozoom heatmapy na definovaný výsek (default 50m) od zkušebního bodu
+            hm_lat_diff = heatmap_dosah_m / m_lat
+            hm_lon_diff = heatmap_dosah_m / m_lon
+            
+            fig_heat.update_layout(
+                yaxis=dict(scaleanchor="x", scaleratio=cos_correction, range=[target_lat - hm_lat_diff, target_lat + hm_lat_diff]),
+                xaxis=dict(range=[target_lon - hm_lon_diff, target_lon + hm_lon_diff]),
+                height=600, dragmode='pan'
+            )
             st.plotly_chart(fig_heat, use_container_width=True)
-            st.divider() # Vizuální oddělovač od detailní mapy
+            st.divider()
 
         # Filtrace v kruhu
         target_lon_array = np.full(len(df), target_lon)
@@ -160,16 +162,16 @@ if uploaded_file is not None:
         in_circle = df[df['distance'] <= radius_m].copy()
         
         if not in_circle.empty:
-            # --- ROBUSTNÍ DETEKCE POJEZDŮ ---
-            # Kombinace časové mezery NEBO změny směru jízdy
+            # --- OPRAVENÁ DETEKCE POJEZDŮ ---
             time_cond = in_circle['parsed_time'].diff().dt.total_seconds() > time_gap_s
-            dir_cond = in_circle[col_dir] != in_circle[col_dir].shift().bfill()
+            # bfill() přidán, aby první bod nenačetl automaticky pojezd navíc
+            dir_cond = in_circle[col_dir] != in_circle[col_dir].shift().bfill() 
             in_circle['pass_id'] = (time_cond | dir_cond).cumsum() + 1
             
             summary = in_circle.groupby('pass_id')[col_stiff].agg(['mean', 'count']).reset_index()
             summary.columns = ['Pojezd', 'Kb [-]', 'Body']
 
-            # MAPA PLOTLY
+            # MAPA PLOTLY - DETAILNÍ
             st.subheader("Detailní mapa pojezdů")
             fig_map = go.Figure()
             
@@ -215,7 +217,7 @@ if uploaded_file is not None:
             fig_map.add_trace(go.Scatter(x=target_lon + (radius_m/m_lon) * np.cos(theta), y=target_lat + (radius_m/m_lat) * np.sin(theta),
                                          mode='lines', line=dict(color='black', dash='dash'), name='Zkušební místo'))
             
-            # --- AUTO-ZOOM ---
+            # --- AUTO-ZOOM DETAILU ---
             min_lat_r, max_lat_r = target_lat - (radius_m / m_lat), target_lat + (radius_m / m_lat)
             min_lon_r, max_lon_r = target_lon - (radius_m / m_lon), target_lon + (radius_m / m_lon)
             
@@ -236,7 +238,6 @@ if uploaded_file is not None:
             )
             st.plotly_chart(fig_map, use_container_width=True)
             
-            # --- NOVÉ: OPRAVA GRAFU NÁRŮSTU (Přes Plotly místo st.line_chart) ---
             st.subheader("Nárůst tuhosti CCC")
             fig_line = go.Figure()
             fig_line.add_trace(go.Scatter(
