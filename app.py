@@ -163,7 +163,7 @@ if uploaded_file is not None:
             # --- ROBUSTNÍ DETEKCE POJEZDŮ ---
             # Kombinace časové mezery NEBO změny směru jízdy
             time_cond = in_circle['parsed_time'].diff().dt.total_seconds() > time_gap_s
-            dir_cond = in_circle[col_dir] != in_circle[col_dir].shift()
+            dir_cond = in_circle[col_dir] != in_circle[col_dir].shift().bfill()
             in_circle['pass_id'] = (time_cond | dir_cond).cumsum() + 1
             
             summary = in_circle.groupby('pass_id')[col_stiff].agg(['mean', 'count']).reset_index()
