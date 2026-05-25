@@ -6,7 +6,7 @@ from pyproj import Geod
 
 # --- 1. NASTAVENÍ APLIKACE ---
 st.set_page_config(page_title="Analýza pojezdů Ammann", layout="wide")
-st.title("🚜 CCC Analýza: Válec Ammann")
+st.title("CCC Analýza: Válec Ammann")
 st.caption("Interaktivní mapa s reálným geometrickým modelem stroje a auto-zoomem.")
 
 # --- 2. POMOCNÉ FUNKCE S CACHINGEM A GEOMETRIÍ ---
