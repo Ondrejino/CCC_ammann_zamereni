@@ -72,7 +72,8 @@ with st.sidebar:
         radius_m = st.slider("Poloměr místa (m)", 0.1, 5.0, 1.0, 0.1)
         
         st.header("4. Korekce a zobrazení")
-        offset_m = st.number_input("Posun anténa -> běhoun (m)", value=2.0, step=0.1)
+        offset_m = st.number_input("Podélný posun anténa -> běhoun (m)", value=2.0, step=0.1)
+        offset_transverse_m = st.number_input("Příčný posun anténa -> běhoun (m) [kladné = vpravo, záporné = vlevo]", value=0.20, step=0.05)
         drum_width_m = st.number_input("Šířka běhounu (m)", value=2.1, step=0.1)
         forward_val = st.text_input("Hodnota jízdy VPŘED", value="1")
         time_gap_s = st.slider("Mezera mezi pojezdy (s)", 5, 60, 15, 5)
@@ -117,7 +118,14 @@ if uploaded_file is not None:
         is_forward = (df[col_dir].astype(str) == str(forward_val)).values
         machine_heading = np.where(is_forward, fwd_az, (fwd_az + 180) % 360)
         
-        new_lons, new_lats, _ = geod.fwd(lons, lats, machine_heading, np.full(len(lons), offset_m))
+        # --- KOREKCE GPS (Podélná i Příčná) ---
+        # 1. Podélný posun
+        temp_lons, temp_lats, _ = geod.fwd(lons, lats, machine_heading, np.full(len(lons), offset_m))
+        
+        # 2. Příčný posun (Kolmice vpravo je +90 stupňů od azimutu)
+        transverse_heading = (machine_heading + 90) % 360
+        new_lons, new_lats, _ = geod.fwd(temp_lons, temp_lats, transverse_heading, np.full(len(lons), offset_transverse_m))
+        
         df['corr_lon'], df['corr_lat'] = new_lons, new_lats
         
         # Matematické převody pro obě mapy
