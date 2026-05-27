@@ -83,7 +83,7 @@ with st.sidebar:
         heatmap_dosah_m = st.number_input("Zobrazený úsek heatmapy (m)", value=50, step=10, help="Vyzoomuje heatmapu do tohoto dosahu od zkušebního bodu.")
         decim_heatmap = st.slider("Decimace Heatmapy (pro rychlost)", 1, 20, 5, 1)
         decimation = st.slider("Decimace detailní mapy", 1, 50, 10, 1)
-        show_machine_model = st.checkbox("Zobrazit model stroje (obdélníky)", value=True)
+        show_machine_model = st.checkbox("Zobrazit model stroje (běhoun a offset L)", value=True)
 
 # --- 4. HLAVNÍ VÝPOČETNÍ LOGIKA ---
 if uploaded_file is not None:
@@ -117,15 +117,16 @@ if uploaded_file is not None:
         
         is_forward = (df[col_dir].astype(str) == str(forward_val)).values
         machine_heading = np.where(is_forward, fwd_az, (fwd_az + 180) % 360)
+        df['machine_heading'] = machine_heading # Uložíme pro vykreslování tvarů
         
         # --- KOREKCE GPS (Podélná i Příčná) ---
-        # 1. Podélný posun
-        temp_lons, temp_lats, _ = geod.fwd(lons, lats, machine_heading, np.full(len(lons), offset_m))
+        # 1. Podélný posun (Bod zlomu Lka)
+        mid_lons, mid_lats, _ = geod.fwd(lons, lats, machine_heading, np.full(len(lons), offset_m))
+        df['mid_lon'], df['mid_lat'] = mid_lons, mid_lats
         
         # 2. Příčný posun (Kolmice vpravo je +90 stupňů od azimutu)
         transverse_heading = (machine_heading + 90) % 360
-        new_lons, new_lats, _ = geod.fwd(temp_lons, temp_lats, transverse_heading, np.full(len(lons), offset_transverse_m))
-        
+        new_lons, new_lats, _ = geod.fwd(mid_lons, mid_lats, transverse_heading, np.full(len(lons), offset_transverse_m))
         df['corr_lon'], df['corr_lat'] = new_lons, new_lats
         
         # Matematické převody pro obě mapy
@@ -150,7 +151,6 @@ if uploaded_file is not None:
             fig_heat.add_trace(go.Scatter(x=target_lon + (radius_m/m_lon) * np.cos(theta), y=target_lat + (radius_m/m_lat) * np.sin(theta),
                                           mode='lines', line=dict(color='black', dash='dot'), name="Radius místa"))
             
-            # Autozoom heatmapy na definovaný výsek (default 50m) od zkušebního bodu
             hm_lat_diff = heatmap_dosah_m / m_lat
             hm_lon_diff = heatmap_dosah_m / m_lon
             
@@ -170,9 +170,8 @@ if uploaded_file is not None:
         in_circle = df[df['distance'] <= radius_m].copy()
         
         if not in_circle.empty:
-            # --- OPRAVENÁ DETEKCE POJEZDŮ ---
+            # --- DETEKCE POJEZDŮ ---
             time_cond = in_circle['parsed_time'].diff().dt.total_seconds() > time_gap_s
-            # bfill() přidán, aby první bod nenačetl automaticky pojezd navíc
             dir_cond = in_circle[col_dir] != in_circle[col_dir].shift().bfill() 
             in_circle['pass_id'] = (time_cond | dir_cond).cumsum() + 1
             
@@ -196,26 +195,22 @@ if uploaded_file is not None:
                 if show_machine_model:
                     step_vis = max(1, len(g)//5) 
                     for i in range(0, len(g), step_vis):
-                        l_lon, l_lat = g[col_lon].iloc[i], g[col_lat].iloc[i] 
-                        r_lon, r_lat = g['corr_lon'].iloc[i], g['corr_lat'].iloc[i] 
+                        ant_lon, ant_lat = g[col_lon].iloc[i], g[col_lat].iloc[i] 
+                        mid_lon, mid_lat = g['mid_lon'].iloc[i], g['mid_lat'].iloc[i] 
+                        drum_lon, drum_lat = g['corr_lon'].iloc[i], g['corr_lat'].iloc[i] 
+                        head = g['machine_heading'].iloc[i]
                         
-                        head = geod.inv(l_lon, l_lat, r_lon, r_lat)[0]
-                        
-                        b_lons, b_lats = dej_obdelnik(r_lon, r_lat, head, drum_width_m, 1.0, geod)
+                        # Vykreslení běhounu
+                        b_lons, b_lats = dej_obdelnik(drum_lon, drum_lat, head, drum_width_m, 1.0, geod)
                         fig_map.add_trace(go.Scatter(
                             x=b_lons, y=b_lats, mode='lines', fill='toself',
                             fillcolor=p_color, opacity=0.3, line=dict(color=p_color, width=2), showlegend=False
                         ))
                         
-                        k_lons, k_lats = dej_obdelnik(l_lon, l_lat, head, 1.5, 1.5, geod)
+                        # Vykreslení čárkovaného L-offsetu (Anténa -> Bod zlomu -> Střed stopy)
                         fig_map.add_trace(go.Scatter(
-                            x=k_lons, y=k_lats, mode='lines', fill='toself',
-                            fillcolor='gray', opacity=0.15, line=dict(color='gray', width=1), showlegend=False
-                        ))
-                        
-                        fig_map.add_trace(go.Scatter(
-                            x=[l_lon, r_lon], y=[l_lat, r_lat], mode='lines', 
-                            line=dict(color=p_color, width=2, dash='dot'), opacity=0.7, showlegend=False
+                            x=[ant_lon, mid_lon, drum_lon], y=[ant_lat, mid_lat, drum_lat], mode='lines', 
+                            line=dict(color=p_color, width=2, dash='dot'), opacity=0.8, showlegend=False
                         ))
                 
                 fig_map.add_trace(go.Scatter(x=g['corr_lon'], y=g['corr_lat'], mode='markers+lines', 
