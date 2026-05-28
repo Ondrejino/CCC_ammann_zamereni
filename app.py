@@ -155,8 +155,8 @@ if uploaded_file is not None:
             hm_lon_diff = heatmap_dosah_m / m_lon
             
             fig_heat.update_layout(
-                yaxis=dict(scaleanchor="x", scaleratio=cos_correction, range=[target_lat - hm_lat_diff, target_lat + hm_lat_diff]),
-                xaxis=dict(range=[target_lon - hm_lon_diff, target_lon + hm_lon_diff]),
+                yaxis=dict(scaleanchor="x", scaleratio=cos_correction, range=[target_lat - hm_lat_diff, target_lat + hm_lat_diff], tickformat=".7f", hoverformat=".7f"),
+                xaxis=dict(range=[target_lon - hm_lon_diff, target_lon + hm_lon_diff], tickformat=".7f", hoverformat=".7f"),
                 height=600, dragmode='pan'
             )
             st.plotly_chart(fig_heat, use_container_width=True)
@@ -235,8 +235,8 @@ if uploaded_file is not None:
             buffer = 0.15 
             
             fig_map.update_layout(
-                yaxis=dict(scaleanchor="x", scaleratio=cos_correction, range=[overall_min_lat - range_lat * buffer, overall_max_lat + range_lat * buffer]),
-                xaxis=dict(range=[overall_min_lon - range_lon * buffer, overall_max_lon + range_lon * buffer]),
+                yaxis=dict(scaleanchor="x", scaleratio=cos_correction, range=[overall_min_lat - range_lat * buffer, overall_max_lat + range_lat * buffer], tickformat=".7f", hoverformat=".7f"),
+                xaxis=dict(range=[overall_min_lon - range_lon * buffer, overall_max_lon + range_lon * buffer], tickformat=".7f", hoverformat=".7f"),
                 height=700, dragmode="pan"
             )
             st.plotly_chart(fig_map, use_container_width=True)
